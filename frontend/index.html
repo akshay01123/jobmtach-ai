@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobMatch AI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <div class="brand">
+        <h1>JobMatch AI</h1>
+        <p class="subtitle">Analyze your resume against a job description to see compatibility and get recommendations.</p>
+      </div>
+    </header>
+
+    <section class="panel upload-panel">
+      <div class="uploads">
+        <div class="dropzone" id="resumeDrop">
+          <label for="resumeInput" class="dz-label">Drop resume here or click to upload</label>
+          <input id="resumeInput" type="file" accept=".pdf,.doc,.docx" hidden>
+          <div class="file-info" id="resumeInfo">No file selected</div>
+        </div>
+
+        <div class="dropzone" id="jobDrop">
+          <label for="jobInput" class="dz-label">Drop job description file here or paste text below</label>
+          <input id="jobInput" type="file" accept=".txt,.pdf,.doc,.docx" hidden>
+          <div class="file-info" id="jobInfo">No file selected</div>
+        </div>
+      </div>
+
+      <div class="or-divider">OR</div>
+
+      <div class="job-text">
+        <label for="jobText">Paste job description</label>
+        <textarea id="jobText" placeholder="Paste the job description here..."></textarea>
+      </div>
+
+      <div class="actions">
+        <button id="analyzeBtn" class="btn primary">Analyze Match</button>
+      </div>
+    </section>
+
+    <section class="results" id="results" aria-hidden="true">
+      <div class="results-header">
+        <h2>Analysis Results</h2>
+        <div class="match-score" id="matchScore">--%</div>
+      </div>
+
+      <div class="results-grid">
+        <div class="card">
+          <h3>Overall Match</h3>
+          <div id="overallMatch">--%</div>
+        </div>
+        <div class="card">
+          <h3>Skills Match</h3>
+          <div id="skillsMatch">--%</div>
+        </div>
+        <div class="card">
+          <h3>Experience Match</h3>
+          <div id="experienceMatch">--%</div>
+        </div>
+        <div class="card">
+          <h3>Education Match</h3>
+          <div id="educationMatch">--%</div>
+        </div>
+        <div class="card wide">
+          <h3>Missing Skills</h3>
+          <ul id="missingSkills" class="list">-</ul>
+        </div>
+        <div class="card wide">
+          <h3>Strengths</h3>
+          <ul id="strengths" class="list">-</ul>
+        </div>
+        <div class="card full">
+          <h3>AI Recommendation</h3>
+          <p id="aiRecommendation">AI analysis not yet implemented.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <small>JobMatch AI — Foundation build. AI features coming soon.</small>
+    </footer>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

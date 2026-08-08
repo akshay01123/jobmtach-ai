@@ -1,0 +1,117 @@
+// Frontend logic for JobMatch AI
+// - Handles drag/drop and file selection
+// - Shows selected filenames
+// - Posts data to /api/analyze (placeholder for now)
+
+const resumeDrop = document.getElementById('resumeDrop');
+const jobDrop = document.getElementById('jobDrop');
+const resumeInput = document.getElementById('resumeInput');
+const jobInput = document.getElementById('jobInput');
+const resumeInfo = document.getElementById('resumeInfo');
+const jobInfo = document.getElementById('jobInfo');
+const jobText = document.getElementById('jobText');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const results = document.getElementById('results');
+const matchScore = document.getElementById('matchScore');
+
+// Result fields
+const overallMatch = document.getElementById('overallMatch');
+const skillsMatch = document.getElementById('skillsMatch');
+const experienceMatch = document.getElementById('experienceMatch');
+const educationMatch = document.getElementById('educationMatch');
+const missingSkills = document.getElementById('missingSkills');
+const strengths = document.getElementById('strengths');
+const aiRecommendation = document.getElementById('aiRecommendation');
+
+// Utility to attach drag/drop to an element and its associated input
+function makeDropzone(zone, input, infoEl){
+  zone.addEventListener('click', ()=> input.click());
+
+  ;['dragenter','dragover'].forEach(evt=>{
+    zone.addEventListener(evt, e=>{
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.add('dragover');
+    });
+  });
+  ;['dragleave','drop'].forEach(evt=>{
+    zone.addEventListener(evt, e=>{
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove('dragover');
+    });
+  });
+
+  zone.addEventListener('drop', e=>{
+    const file = e.dataTransfer.files[0];
+    if(file) handleFileSelected(file, input, infoEl);
+  });
+
+  input.addEventListener('change', e=>{
+    const file = e.target.files[0];
+    if(file) handleFileSelected(file, input, infoEl);
+  });
+}
+
+function handleFileSelected(file, input, infoEl){
+  // store file reference on the input element for later upload
+  input._file = file;
+  infoEl.textContent = `${file.name} (${Math.round(file.size/1024)} KB)`;
+}
+
+makeDropzone(resumeDrop, resumeInput, resumeInfo);
+makeDropzone(jobDrop, jobInput, jobInfo);
+
+analyzeBtn.addEventListener('click', async ()=>{
+  // show a simple loading state
+  analyzeBtn.disabled = true;
+  analyzeBtn.textContent = 'Analyzing...';
+
+  const form = new FormData();
+  if(resumeInput._file) form.append('resume', resumeInput._file);
+  if(jobInput._file) form.append('job_file', jobInput._file);
+  if(jobText.value.trim()) form.append('job_text', jobText.value.trim());
+
+  try{
+    const resp = await fetch('/api/analyze', {
+      method: 'POST',
+      body: form
+    });
+
+    if(!resp.ok) throw new Error('Server error');
+    const data = await resp.json();
+    // Populate results (these keys come from the backend placeholder)
+    matchScore.textContent = data.match_percentage || '--%';
+    overallMatch.textContent = data.overall_match || '--%';
+    skillsMatch.textContent = data.skills_match || '--%';
+    experienceMatch.textContent = data.experience_match || '--%';
+    educationMatch.textContent = data.education_match || '--%';
+
+    // Lists
+    missingSkills.innerHTML = '';
+    (data.missing_skills || []).forEach(s=>{
+      const li = document.createElement('li'); li.textContent = s; missingSkills.appendChild(li);
+    });
+    strengths.innerHTML = '';
+    (data.strengths || []).forEach(s=>{
+      const li = document.createElement('li'); li.textContent = s; strengths.appendChild(li);
+    });
+
+    aiRecommendation.textContent = data.ai_recommendation || 'AI analysis not yet implemented.';
+
+    // show results
+    results.style.display = 'block';
+    results.setAttribute('aria-hidden','false');
+  }catch(err){
+    console.error(err);
+    alert('Failed to analyze. Backend may not be running.');
+  }finally{
+    analyzeBtn.disabled = false;
+    analyzeBtn.textContent = 'Analyze Match';
+  }
+});
+
+// Small enhancement: allow pressing Ctrl+Enter in job text to trigger analyze
+jobText.addEventListener('keydown', e=>{
+  if((e.ctrlKey||e.metaKey) && e.key === 'Enter') analyzeBtn.click();
+});

@@ -1,0 +1,18 @@
+# Python virtual environments
+venv/
+.env
+.env*
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Uploaded files (developer may store uploads here during development)
+uploads/
+
+# macOS
+.DS_Store
+
+# Editor directories
+.vscode/
