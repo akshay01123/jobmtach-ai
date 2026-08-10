@@ -8,6 +8,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="JobMatch AI - Backend")
 
@@ -19,6 +20,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve the frontend static files so you can open the app at http://127.0.0.1:8000
+# This keeps the frontend and backend separated but hosted from the same server
+# during development (no edits to `frontend/script.js` required).
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 
 @app.get("/api/health")
