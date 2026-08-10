@@ -24,7 +24,6 @@ app.add_middleware(
 # Serve the frontend static files so you can open the app at http://127.0.0.1:8000
 # This keeps the frontend and backend separated but hosted from the same server
 # during development (no edits to `frontend/script.js` required).
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 
 @app.get("/api/health")
@@ -73,6 +72,12 @@ async def analyze(
         "strengths": [],
         "ai_recommendation": "AI analysis not implemented yet. Backend placeholder response."
     }
+
+
+# Mount frontend static files after API routes so API paths (e.g. /api/health)
+# are matched first. Serving at `/` allows opening the app at
+# http://127.0.0.1:8000 without editing frontend paths.
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 
 if __name__ == "__main__":
