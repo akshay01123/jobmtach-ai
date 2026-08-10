@@ -2,3 +2,4 @@ fastapi>=0.95.0
 uvicorn[standard]>=0.22.0
 # Required for FastAPI StaticFiles serving
 aiofiles>=23.1.0
+python-multipart>=0.0.6
