@@ -15,6 +15,19 @@ const results = document.getElementById('results');
 const matchScore = document.getElementById('matchScore');
 
 const matcherRadios = () => document.querySelector('input[name="matcher"]:checked')?.value || 'backend';
+const modelInput = document.getElementById('modelInput');
+const modelRow = document.getElementById('modelRow');
+const loadingOverlay = document.createElement('div');
+loadingOverlay.className = 'loading-overlay';
+loadingOverlay.innerHTML = '<div class="spinner" role="status" aria-label="Loading"></div>';
+document.body.appendChild(loadingOverlay);
+
+function showLoading(){
+  loadingOverlay.classList.add('show');
+}
+function hideLoading(){
+  loadingOverlay.classList.remove('show');
+}
 
 // Result fields
 const overallMatch = document.getElementById('overallMatch');
@@ -68,6 +81,7 @@ analyzeBtn.addEventListener('click', async ()=>{
   // show a simple loading state
   analyzeBtn.disabled = true;
   analyzeBtn.textContent = 'Analyzing...';
+  showLoading();
   const selected = matcherRadios();
   const form = new FormData();
   if(resumeInput._file) form.append('resume', resumeInput._file);
@@ -78,6 +92,8 @@ analyzeBtn.addEventListener('click', async ()=>{
     let resp;
     if(selected === 'ollama'){
       // call ollama_match endpoint (expects form with job_text and optional resume)
+      // append model name if available
+      if(modelInput && modelInput.value) form.append('model', modelInput.value);
       resp = await fetch('/api/ollama_match', { method: 'POST', body: form });
     }else{
       resp = await fetch('/api/analyze', { method: 'POST', body: form });
@@ -107,14 +123,28 @@ analyzeBtn.addEventListener('click', async ()=>{
     aiRecommendation.textContent = data.ai_recommendation || data.recommendation || 'AI analysis not yet implemented.';
 
     // show results
-    results.style.display = 'block';
+    results.classList.add('show');
     results.setAttribute('aria-hidden','false');
+    // animate score if available
+    const raw = (data.match_percentage || data.overall_match || (data.score ? `${data.score}%` : '--%')).toString();
+    const n = parseInt(raw.replace('%',''));
+    if(!isNaN(n)){
+      let start = 0;
+      const el = matchScore;
+      const step = Math.max(1, Math.round(n/20));
+      const iv = setInterval(()=>{
+        start = Math.min(n, start + step);
+        el.textContent = `${start}%`;
+        if(start >= n) clearInterval(iv);
+      }, 12);
+    }
   }catch(err){
     console.error(err);
     alert('Failed to analyze. Backend may not be running.');
   }finally{
     analyzeBtn.disabled = false;
     analyzeBtn.textContent = 'Analyze Match';
+    hideLoading();
   }
 });
 
@@ -122,3 +152,14 @@ analyzeBtn.addEventListener('click', async ()=>{
 jobText.addEventListener('keydown', e=>{
   if((e.ctrlKey||e.metaKey) && e.key === 'Enter') analyzeBtn.click();
 });
+
+// show/hide model input when matcher changes
+document.querySelectorAll('input[name="matcher"]').forEach(r=>{
+  r.addEventListener('change', ()=>{
+    if(matcherRadios() === 'ollama') modelRow.style.display = 'inline-flex';
+    else modelRow.style.display = 'none';
+  });
+});
+
+// initial toggle
+if(matcherRadios() === 'ollama') modelRow.style.display = 'inline-flex';
