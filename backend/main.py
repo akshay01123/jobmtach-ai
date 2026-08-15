@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 from fastapi.staticfiles import StaticFiles
+import requests
+from bs4 import BeautifulSoup
 
 app = FastAPI(title="JobMatch AI - Backend")
 
@@ -148,6 +150,81 @@ async def analyze(
         "strengths": matched[:20],
         "ai_recommendation": ai_recommendation,
     }
+
+
+
+@app.post("/api/search_and_match")
+async def search_and_match(job_text: str = Form(...), max_results: int = Form(3)):
+    """
+    Prototype: Search the web for similar job postings and compute simple
+    keyword-overlap matches against the provided `job_text`.
+
+    Notes:
+    - Uses DuckDuckGo HTML search (no API key). Limited to a few pages.
+    - This is a proof-of-concept. Respect site robots/usage when running at scale.
+    """
+    # Basic helpers (reuse tokenization logic)
+    import re
+
+    def tokens(s: str):
+        s = (s or "").lower()
+        parts = re.split(r"[^a-z0-9+#+\-]+", s)
+        stop = {"the","and","with","for","a","an","to","of","in","on","is","as","by","at","be","or","from","that","this","we","you"}
+        return [p for p in parts if p and len(p) > 2 and p not in stop]
+
+    job_tokens = set(tokens(job_text))
+    if not job_tokens:
+        return {"error": "job_text is required and should contain searchable tokens."}
+
+    # Perform a DuckDuckGo HTML search (lightweight, no JS)
+    try:
+        params = {"q": job_text + " job"}
+        resp = requests.get("https://html.duckduckgo.com/html/", params=params, timeout=8, headers={"User-Agent": "jobmatch-ai-bot/1.0"})
+        resp.raise_for_status()
+    except Exception as e:
+        return {"error": f"search failed: {e}"}
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    links = []
+    # DuckDuckGo's HTML results put links in <a class="result__a"> often;
+    for a in soup.select('a.result__a'):
+        href = a.get('href')
+        if href and href.startswith('http'):
+            links.append(href)
+    # Fallback: any external links
+    if not links:
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            if href.startswith('http'):
+                links.append(href)
+
+    links = links[:max_results]
+
+    results = []
+    scores = []
+    for url in links:
+        try:
+            r = requests.get(url, timeout=8, headers={"User-Agent": "jobmatch-ai-bot/1.0"})
+            r.raise_for_status()
+            page = BeautifulSoup(r.text, "html.parser")
+            text = page.get_text(separator=' ')
+        except Exception:
+            text = ""
+
+        page_tokens = set(tokens(text))
+        matched = job_tokens & page_tokens
+        score = round((len(matched) / len(job_tokens)) * 100) if job_tokens else 0
+        scores.append(score)
+        results.append({
+            "url": url,
+            "score": score,
+            "matched_terms": sorted(list(matched))[:30],
+            "snippet": (text or '')[:300]
+        })
+
+    avg = round(sum(scores) / len(scores)) if scores else 0
+
+    return {"average_match": f"{avg}%", "results": results}
 
 
 # Mount frontend static files after API routes so API paths (e.g. /api/health)
