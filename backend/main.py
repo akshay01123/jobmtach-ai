@@ -273,20 +273,47 @@ async def ollama_match(
         "INPUT_JSON: {\"job_text\": " + json.dumps(job_text) + ", \"resume_text\": " + json.dumps(resume_text) + "}"
     )
 
-    # Call ollama CLI: `ollama run <model> <prompt>`
+    # Prefer calling Ollama HTTP API if available, otherwise fall back to CLI.
+    out = ""
+    http_url = "http://127.0.0.1:11434/api/generate"
     try:
-        completed = subprocess.run(
-            ["ollama", "run", model, prompt],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except FileNotFoundError:
-        return {"error": "ollama CLI not found. Ensure ollama is installed and on PATH."}
-    except subprocess.TimeoutExpired:
-        return {"error": "ollama call timed out"}
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "temperature": 0.0,
+            "max_tokens": 512,
+        }
+        resp = requests.post(http_url, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        # Try to extract textual output from the JSON response if possible
+        try:
+            j = resp.json()
+            # Common keys that may contain model text
+            for key in ("output", "result", "text", "completion", "response", "content", "choices"):
+                if key in j:
+                    val = j[key]
+                    out = json.dumps(val) if not isinstance(val, str) else val
+                    break
+            if not out:
+                # fallback to full JSON
+                out = json.dumps(j)
+        except Exception:
+            out = resp.text
+    except Exception:
+        # HTTP failed; fall back to CLI invocation
+        try:
+            completed = subprocess.run(
+                ["ollama", "run", model, prompt],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except FileNotFoundError:
+            return {"error": "ollama CLI not found and HTTP API unreachable. Ensure ollama is installed and running."}
+        except subprocess.TimeoutExpired:
+            return {"error": "ollama call timed out"}
 
-    out = (completed.stdout or completed.stderr or "").strip()
+        out = (completed.stdout or completed.stderr or "").strip()
 
     # Try to find a JSON object in the output
     try:
