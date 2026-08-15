@@ -11,6 +11,8 @@ from typing import Optional, List
 from fastapi.staticfiles import StaticFiles
 import requests
 from bs4 import BeautifulSoup
+import subprocess
+import json
 
 app = FastAPI(title="JobMatch AI - Backend")
 
@@ -225,6 +227,80 @@ async def search_and_match(job_text: str = Form(...), max_results: int = Form(3)
     avg = round(sum(scores) / len(scores)) if scores else 0
 
     return {"average_match": f"{avg}%", "results": results}
+
+
+
+@app.post("/api/ollama_match")
+async def ollama_match(
+    job_text: str = Form(...),
+    resume: Optional[UploadFile] = File(None),
+    model: str = Form('gemma3:4b'),
+    timeout: int = Form(20),
+):
+    """
+    Use local Ollama (via CLI) to compare resume text and job_text.
+
+    This endpoint constructs a prompt asking the model to produce a JSON
+    object with fields: score (0-100), strengths (list), missing_skills (list),
+    and recommendation (string). It calls the `ollama` CLI and returns the parsed JSON.
+
+    Note: This uses the `ollama` CLI available on the host. If you prefer an
+    HTTP-based integration, set `model` and we can adapt the code.
+    """
+    # Reuse the simple text extraction helper (best-effort)
+    def extract_text_from_upload(upload: Optional[UploadFile]):
+        if not upload:
+            return ""
+        try:
+            content = upload.file.read()
+            upload.file.seek(0)
+            return content.decode('utf-8', errors='ignore')
+        except Exception:
+            return ""
+
+    resume_text = extract_text_from_upload(resume)
+
+    prompt = (
+        "You are an assistant that compares a candidate resume to a job description.\n"
+        "Input: a JSON object with keys 'job_text' and 'resume_text'.\n"
+        "Output: ONLY a JSON object with the following keys:\n"
+        "- score: integer from 0 to 100 representing overall match\n"
+        "- strengths: array of short strings (skills the resume has)\n"
+        "- missing_skills: array of short strings (skills in job but missing in resume)\n"
+        "- recommendation: short action-oriented advice.\n"
+        "Do not include any additional text.\n\n"
+        "Now process the input and produce the JSON.\n\n"
+        "INPUT_JSON: {\"job_text\": " + json.dumps(job_text) + ", \"resume_text\": " + json.dumps(resume_text) + "}"
+    )
+
+    # Call ollama CLI: `ollama run <model> <prompt>`
+    try:
+        completed = subprocess.run(
+            ["ollama", "run", model, prompt],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return {"error": "ollama CLI not found. Ensure ollama is installed and on PATH."}
+    except subprocess.TimeoutExpired:
+        return {"error": "ollama call timed out"}
+
+    out = (completed.stdout or completed.stderr or "").strip()
+
+    # Try to find a JSON object in the output
+    try:
+        # Some models may include surrounding text; attempt to locate the first '{'..'}'
+        start = out.find('{')
+        end = out.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            candidate = out[start:end+1]
+            parsed = json.loads(candidate)
+            return parsed
+        # fallback: attempt direct json loads
+        return json.loads(out)
+    except Exception:
+        return {"error": "Failed to parse model output as JSON", "raw_output": out}
 
 
 # Mount frontend static files after API routes so API paths (e.g. /api/health)
