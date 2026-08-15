@@ -14,6 +14,8 @@ const analyzeBtn = document.getElementById('analyzeBtn');
 const results = document.getElementById('results');
 const matchScore = document.getElementById('matchScore');
 
+const matcherRadios = () => document.querySelector('input[name="matcher"]:checked')?.value || 'backend';
+
 // Result fields
 const overallMatch = document.getElementById('overallMatch');
 const skillsMatch = document.getElementById('skillsMatch');
@@ -66,38 +68,43 @@ analyzeBtn.addEventListener('click', async ()=>{
   // show a simple loading state
   analyzeBtn.disabled = true;
   analyzeBtn.textContent = 'Analyzing...';
-
+  const selected = matcherRadios();
   const form = new FormData();
   if(resumeInput._file) form.append('resume', resumeInput._file);
   if(jobInput._file) form.append('job_file', jobInput._file);
   if(jobText.value.trim()) form.append('job_text', jobText.value.trim());
 
   try{
-    const resp = await fetch('/api/analyze', {
-      method: 'POST',
-      body: form
-    });
+    let resp;
+    if(selected === 'ollama'){
+      // call ollama_match endpoint (expects form with job_text and optional resume)
+      resp = await fetch('/api/ollama_match', { method: 'POST', body: form });
+    }else{
+      resp = await fetch('/api/analyze', { method: 'POST', body: form });
+    }
 
     if(!resp.ok) throw new Error('Server error');
     const data = await resp.json();
     // Populate results (these keys come from the backend placeholder)
-    matchScore.textContent = data.match_percentage || '--%';
-    overallMatch.textContent = data.overall_match || '--%';
+    // Support responses from both the simple backend and Ollama JSON
+    const score = data.match_percentage || data.overall_match || (data.score ? `${data.score}%` : '--%');
+    matchScore.textContent = score || '--%';
+    overallMatch.textContent = data.overall_match || (data.score ? `${data.score}%` : '--%');
     skillsMatch.textContent = data.skills_match || '--%';
-    experienceMatch.textContent = data.experience_match || '--%';
+    experienceMatch.textContent = data.experience_match || (data.experience_match === 0 ? '0%' : (data.experience ? `${data.experience}%` : '--%'));
     educationMatch.textContent = data.education_match || '--%';
 
     // Lists
     missingSkills.innerHTML = '';
-    (data.missing_skills || []).forEach(s=>{
+    (data.missing_skills || data.missingSkills || []).forEach(s=>{
       const li = document.createElement('li'); li.textContent = s; missingSkills.appendChild(li);
     });
     strengths.innerHTML = '';
-    (data.strengths || []).forEach(s=>{
+    (data.strengths || data.strengths || data.strengths || []).forEach(s=>{
       const li = document.createElement('li'); li.textContent = s; strengths.appendChild(li);
     });
 
-    aiRecommendation.textContent = data.ai_recommendation || 'AI analysis not yet implemented.';
+    aiRecommendation.textContent = data.ai_recommendation || data.recommendation || 'AI analysis not yet implemented.';
 
     // show results
     results.style.display = 'block';
