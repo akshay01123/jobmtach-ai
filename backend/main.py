@@ -154,6 +154,64 @@ async def analyze(
     }
 
 
+# Extract the basic matching logic into a helper so other endpoints can fall back
+def compute_basic_match(job_text: str, resume_text: str):
+    import re
+
+    def tokens(s: str):
+        s = (s or "").lower()
+        parts = re.split(r"[^a-z0-9+#+\-]+", s)
+        stop = {"the","and","with","for","a","an","to","of","in","on","is","as","by","at","be","or","from","that","this","we","you"}
+        return [p for p in parts if p and len(p) > 2 and p not in stop]
+
+    job_tokens = set(tokens(job_text))
+    resume_tokens = set(tokens(resume_text))
+
+    if not job_tokens:
+        return {
+            "match_percentage": "--%",
+            "overall_match": "--%",
+            "skills_match": "--%",
+            "experience_match": "--%",
+            "education_match": "--%",
+            "missing_skills": [],
+            "strengths": [],
+            "ai_recommendation": "Please provide job description text or upload a text-based job file."
+        }
+
+    matched = sorted(list(job_tokens & resume_tokens))
+    missing = sorted(list(job_tokens - resume_tokens))
+
+    skills_pct = round((len(matched) / len(job_tokens)) * 100) if job_tokens else 0
+
+    exp_keywords = {"experience","years","year","senior","junior","mid-level","lead"}
+    exp_in_job = any(k in job_tokens for k in exp_keywords)
+    exp_in_resume = any(k in resume_tokens for k in exp_keywords)
+    experience_pct = 100 if (exp_in_job and exp_in_resume) else (50 if (exp_in_job or exp_in_resume) else 0)
+
+    edu_keywords = {"bachelor","master","phd","bs","ba","ms","degree"}
+    edu_in_job = any(k in job_tokens for k in edu_keywords)
+    edu_in_resume = any(k in resume_tokens for k in edu_keywords)
+    education_pct = 100 if (edu_in_job and edu_in_resume) else (50 if (edu_in_job or edu_in_resume) else 0)
+
+    overall = round(0.65 * skills_pct + 0.25 * experience_pct + 0.10 * education_pct)
+
+    ai_recommendation = (
+        "This is a basic keyword-overlap match. For better results, implement PDF/DOCX parsing, embeddings, and an LLM."
+    )
+
+    return {
+        "match_percentage": f"{overall}%",
+        "overall_match": f"{overall}%",
+        "skills_match": f"{skills_pct}%",
+        "experience_match": f"{experience_pct}%",
+        "education_match": f"{education_pct}%",
+        "missing_skills": missing[:20],
+        "strengths": matched[:20],
+        "ai_recommendation": ai_recommendation,
+    }
+
+
 
 @app.post("/api/search_and_match")
 async def search_and_match(job_text: str = Form(...), max_results: int = Form(3)):
@@ -232,7 +290,7 @@ async def search_and_match(job_text: str = Form(...), max_results: int = Form(3)
 
 @app.post("/api/ollama_match")
 async def ollama_match(
-    job_text: str = Form(...),
+    job_text: Optional[str] = Form(None),
     resume: Optional[UploadFile] = File(None),
     model: str = Form('gemma3:4b'),
     timeout: int = Form(20),
@@ -262,15 +320,17 @@ async def ollama_match(
 
     prompt = (
         "You are an assistant that compares a candidate resume to a job description.\n"
-        "Input: a JSON object with keys 'job_text' and 'resume_text'.\n"
-        "Output: ONLY a JSON object with the following keys:\n"
-        "- score: integer from 0 to 100 representing overall match\n"
-        "- strengths: array of short strings (skills the resume has)\n"
-        "- missing_skills: array of short strings (skills in job but missing in resume)\n"
-        "- recommendation: short action-oriented advice.\n"
-        "Do not include any additional text.\n\n"
-        "Now process the input and produce the JSON.\n\n"
-        "INPUT_JSON: {\"job_text\": " + json.dumps(job_text) + ", \"resume_text\": " + json.dumps(resume_text) + "}"
+        "Input: a JSON object with keys 'job_text' and 'resume_text'.\n\n"
+        "RESPONSE REQUIREMENTS:\n"
+        "- Output EXACTLY one valid JSON object and nothing else.\n"
+        "- Do NOT include code fences (```), commentary, or extra text.\n"
+        "- The JSON must be compact and use standard JSON syntax (no trailing commas).\n"
+        "- Keys: 'score' (integer 0-100), 'strengths' (array of strings),\n"
+        "  'missing_skills' (array of strings), 'recommendation' (string).\n"
+        "- Do NOT insert newlines inside JSON tokens or keys. Output may be a single-line JSON.\n\n"
+        "If you cannot produce valid JSON, output an empty JSON object: {}\n\n"
+        "Now produce the JSON for the following input.\n\n"
+        "INPUT_JSON: {\"job_text\": " + json.dumps(job_text or "") + ", \"resume_text\": " + json.dumps(resume_text) + "}"
     )
 
     # Use the Ollama CLI by default (more reliable local concatenated output).
@@ -377,14 +437,33 @@ async def ollama_match(
                 e = fenced.rfind('}')
                 if s != -1 and e != -1 and e > s:
                     candidate = fenced[s:e+1]
+                    # Try cleaning common streaming breaks: collapse newlines
+                    # and excessive whitespace so broken tokens join back.
                     try:
-                        return json.loads(candidate)
+                        import re as _re
+                        candidate_clean = _re.sub(r"\s+", " ", candidate).strip()
+                        return json.loads(candidate_clean)
                     except Exception:
-                        pass
+                        try:
+                            # Last resort: remove all newlines and try again
+                            candidate_clean2 = candidate.replace('\n', '')
+                            return json.loads(candidate_clean2)
+                        except Exception:
+                            pass
     except Exception:
         pass
 
-    return {"error": "Failed to parse model output as JSON", "raw_output": out}
+    # Parsing failed — fall back to deterministic basic matcher so the
+    # frontend always receives a usable match result.
+    try:
+        basic = compute_basic_match(job_text or "", resume_text)
+        # include a short debug hint but keep primary shape consistent
+        basic["fallback"] = "ollama_parse_failed"
+        basic["raw_model_output"] = out[:1200]
+        return basic
+    except Exception:
+        return {"error": "Failed to parse model output and fallback failed.", "raw_output": out}
+    
 
 
 # Mount frontend static files after API routes so API paths (e.g. /api/health)
