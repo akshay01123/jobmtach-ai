@@ -469,9 +469,29 @@ async def ollama_match(
 # Mount frontend static files after API routes so API paths (e.g. /api/health)
 # are matched first. Serving at `/` allows opening the app at
 # http://127.0.0.1:8000 without editing frontend paths.
+@app.post("/api/ai_match")
+async def ai_match(
+    job_text: Optional[str] = Form(None),
+    resume: Optional[UploadFile] = File(None),
+    model: str = Form('gemma3:4b'),
+    timeout: int = Form(20),
+):
+    """Alias endpoint for AI-based matching (previously `/api/ollama_match`).
+
+    Keeps backward-compatibility while exposing a more generic name for the
+    frontend to call.
+    """
+    return await ollama_match(job_text=job_text, resume=resume, model=model, timeout=timeout)
+
+# Mount frontend static files after API routes so API paths (e.g. /api/health)
+# are matched first. Serving at `/` allows opening the app at
+# http://127.0.0.1:8000 without editing frontend paths.
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
+
+
+

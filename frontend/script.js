@@ -94,7 +94,7 @@ analyzeBtn.addEventListener('click', async ()=>{
       // call ollama_match endpoint (expects form with job_text and optional resume)
       // append model name if available
       if(modelInput && modelInput.value) form.append('model', modelInput.value);
-      resp = await fetch('/api/ollama_match', { method: 'POST', body: form });
+      resp = await fetch('/api/ai_match', { method: 'POST', body: form });
     }else{
       resp = await fetch('/api/analyze', { method: 'POST', body: form });
     }
