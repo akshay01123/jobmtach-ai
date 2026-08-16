@@ -273,61 +273,118 @@ async def ollama_match(
         "INPUT_JSON: {\"job_text\": " + json.dumps(job_text) + ", \"resume_text\": " + json.dumps(resume_text) + "}"
     )
 
-    # Prefer calling Ollama HTTP API if available, otherwise fall back to CLI.
+    # Use the Ollama CLI by default (more reliable local concatenated output).
     out = ""
-    http_url = "http://127.0.0.1:11434/api/generate"
     try:
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "temperature": 0.0,
-            "max_tokens": 512,
-        }
-        resp = requests.post(http_url, json=payload, timeout=timeout)
-        resp.raise_for_status()
-        # Try to extract textual output from the JSON response if possible
+        completed = subprocess.run(
+            ["ollama", "run", model, prompt],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return {"error": "ollama CLI not found. Ensure ollama is installed and on PATH."}
+    except subprocess.TimeoutExpired:
+        return {"error": "ollama call timed out"}
+
+    out = (completed.stdout or completed.stderr or "").strip()
+    # Strip common ANSI/control sequences that may be present in model output
+    try:
+        import re as _re
+        out = _re.sub(r"\x1B\[[0-9;]*[A-Za-z]", "", out)
+    except Exception:
+        pass
+
+    # Try to find a JSON object in the output. Ollama's HTTP API may stream
+    # many small JSON objects (one per chunk) where the model text appears
+    # in a "response" field. The model's produced JSON may be embedded inside
+    # that streamed text (possibly with code fences), so attempt several
+    # extraction strategies and return the first valid JSON object found.
+    def _extract_first_json(text: str):
+        import re
+
+        # Fast path: if the whole response is valid JSON, return it
         try:
-            j = resp.json()
-            # Common keys that may contain model text
-            for key in ("output", "result", "text", "completion", "response", "content", "choices"):
-                if key in j:
-                    val = j[key]
-                    out = json.dumps(val) if not isinstance(val, str) else val
-                    break
-            if not out:
-                # fallback to full JSON
-                out = json.dumps(j)
+            return json.loads(text)
         except Exception:
-            out = resp.text
-    except Exception:
-        # HTTP failed; fall back to CLI invocation
-        try:
-            completed = subprocess.run(
-                ["ollama", "run", model, prompt],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except FileNotFoundError:
-            return {"error": "ollama CLI not found and HTTP API unreachable. Ensure ollama is installed and running."}
-        except subprocess.TimeoutExpired:
-            return {"error": "ollama call timed out"}
+            pass
 
-        out = (completed.stdout or completed.stderr or "").strip()
+        # Search for balanced-brace substrings and try to parse them.
+        # Iterate over all '{' positions and attempt to find a matching '}'
+        starts = [m.start() for m in re.finditer(r"\\{", text)]
+        ends = [m.start() for m in re.finditer(r"\\}", text)]
+        for s in starts:
+            for e in ends:
+                if e <= s:
+                    continue
+                cand = text[s : e + 1]
+                try:
+                    return json.loads(cand)
+                except Exception:
+                    continue
 
-    # Try to find a JSON object in the output
+        # As a last effort, try to find JSON inside triple-backtick fences
+        # allow optional fence language like ```json
+        code_fence = re.search(r"```(?:\w+)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if code_fence:
+            try:
+                return json.loads(code_fence.group(1))
+            except Exception:
+                pass
+
+        return None
+
+    # If the HTTP API returned a streaming sequence of small JSON objects
+    # (one per chunk) that include a 'response' field, reconstruct the
+    # model text by concatenating those 'response' values in order, then
+    # attempt to extract JSON from that reconstructed text.
+    reconstructed = None
     try:
-        # Some models may include surrounding text; attempt to locate the first '{'..'}'
-        start = out.find('{')
-        end = out.rfind('}')
-        if start != -1 and end != -1 and end > start:
-            candidate = out[start:end+1]
-            parsed = json.loads(candidate)
-            return parsed
-        # fallback: attempt direct json loads
-        return json.loads(out)
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        parts = []
+        for ln in lines:
+            try:
+                jln = json.loads(ln)
+            except Exception:
+                # not a JSON line — skip
+                continue
+            if isinstance(jln, dict) and 'response' in jln:
+                parts.append(str(jln.get('response') or ''))
+        if parts:
+            reconstructed = ''.join(parts)
     except Exception:
-        return {"error": "Failed to parse model output as JSON", "raw_output": out}
+        reconstructed = None
+
+    if reconstructed:
+        parsed_rec = _extract_first_json(reconstructed)
+        if parsed_rec is not None:
+            return parsed_rec
+
+    # Final attempt: run the general extractor on the raw output
+    parsed = _extract_first_json(out)
+    if parsed is not None:
+        return parsed
+
+    # If the model placed JSON inside code-fence markers (```...```),
+    # extract the fenced content and attempt to parse JSON from it.
+    try:
+        if '```' in out:
+            first = out.find('```')
+            last = out.rfind('```')
+            if first != -1 and last != -1 and last > first:
+                fenced = out[first+3:last]
+                s = fenced.find('{')
+                e = fenced.rfind('}')
+                if s != -1 and e != -1 and e > s:
+                    candidate = fenced[s:e+1]
+                    try:
+                        return json.loads(candidate)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    return {"error": "Failed to parse model output as JSON", "raw_output": out}
 
 
 # Mount frontend static files after API routes so API paths (e.g. /api/health)
